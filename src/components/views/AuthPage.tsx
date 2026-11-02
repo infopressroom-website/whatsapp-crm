@@ -3,17 +3,27 @@ import {
   MessageCircle, Mail, Lock, User, Eye, EyeOff, ArrowRight,
   Check, Phone, Building2, Loader2, AlertCircle,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import { seedUserData } from '@/lib/seed';
+
+export type DemoUser = {
+  id: string;
+  email: string;
+  name: string;
+};
 
 type AuthMode = 'login' | 'signup';
 
-const DEMO_CREDENTIALS = [
-  { email: 'riya@whatsappbiz.com', password: 'demo1234', name: 'Riya Sharma' },
-  { email: 'admin@store.com', password: 'admin1234', name: 'Admin User' },
+const DEMO_CREDENTIALS: (DemoUser & { password: string; role: string })[] = [
+  { id: 'u-riya', email: 'riya@whatsappbiz.com', password: 'demo1234', name: 'Riya Sharma', role: 'Owner' },
+  { id: 'u-admin', email: 'admin@store.com', password: 'admin1234', name: 'Admin User', role: 'Admin' },
 ];
 
-export default function AuthPage() {
+const STORAGE_KEY = 'wa-demo-session';
+
+interface AuthPageProps {
+  onLogin: (user: DemoUser) => void;
+}
+
+export default function AuthPage({ onLogin }: AuthPageProps) {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,29 +33,34 @@ export default function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [info, setInfo] = useState('');
 
-  const handleLogin = async (loginEmail: string, loginPassword: string) => {
-    setError('');
-    setInfo('');
-    setLoading(true);
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email: loginEmail.trim().toLowerCase(),
-      password: loginPassword,
-    });
-    if (authError) {
-      setLoading(false);
-      setError(authError.message.includes('Invalid login')
-        ? 'Invalid email or password. Try a demo account below, or sign up for a new account.'
-        : authError.message);
-      return;
-    }
+  const persistAndLogin = (user: DemoUser) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+    } catch { /* ignore quota / private mode */ }
+    onLogin(user);
   };
 
-  const handleSignup = async (e: React.FormEvent) => {
+  const handleLogin = (loginEmail: string, loginPassword: string) => {
+    setError('');
+    setLoading(true);
+    // simulate brief network delay for a realistic feel
+    setTimeout(() => {
+      const match = DEMO_CREDENTIALS.find(
+        (c) => c.email === loginEmail.trim().toLowerCase() && c.password === loginPassword,
+      );
+      if (match) {
+        persistAndLogin({ id: match.id, email: match.email, name: match.name });
+      } else {
+        setLoading(false);
+        setError('Invalid email or password. Try a demo account below, or sign up for a new account.');
+      }
+    }, 600);
+  };
+
+  const handleSignup = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setInfo('');
     if (!name.trim() || !email.trim() || !password.trim()) {
       setError('Please fill in all required fields.');
       return;
@@ -54,25 +69,20 @@ export default function AuthPage() {
       setError('Password must be at least 6 characters.');
       return;
     }
-    setLoading(true);
-    const { data, error: authError } = await supabase.auth.signUp({
-      email: email.trim().toLowerCase(),
-      password,
-      options: { data: { name: name.trim(), company: company.trim() } },
-    });
-    if (authError) {
-      setLoading(false);
-      setError(authError.message);
+    if (DEMO_CREDENTIALS.some((c) => c.email === email.trim().toLowerCase())) {
+      setError('An account with this email already exists. Please sign in.');
       return;
     }
-    if (data.user) {
-      setInfo('Creating your account and seeding demo data...');
-      await seedUserData(data.user.id);
-      setLoading(false);
-      setInfo('Account ready! You can now sign in.');
-      setMode('login');
-      setPassword('');
-    }
+    setLoading(true);
+    setTimeout(() => {
+      const newUser: DemoUser = {
+        id: 'u-' + Math.random().toString(36).slice(2, 10),
+        email: email.trim().toLowerCase(),
+        name: name.trim(),
+      };
+      // Note: for this demo, newly signed-up accounts log straight in.
+      persistAndLogin(newUser);
+    }, 800);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -88,59 +98,15 @@ export default function AuthPage() {
     }
   };
 
-  const quickDemoLogin = async (cred: typeof DEMO_CREDENTIALS[0]) => {
+  const quickDemoLogin = (cred: typeof DEMO_CREDENTIALS[0]) => {
     setError('');
-    setInfo('');
     setEmail(cred.email);
     setPassword(cred.password);
     setMode('login');
     setLoading(true);
-    setInfo(`Signing in as ${cred.name}...`);
-
-    // Try to sign in first (works if account already exists)
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: cred.email,
-      password: cred.password,
-    });
-
-    if (!signInError) return; // Success — onAuthStateChange will pick up the session
-
-    // Account doesn't exist yet — create it with auto-confirmed email
-    setInfo('First time setup — creating demo account & seeding data...');
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email: cred.email,
-      password: cred.password,
-      options: { data: { name: cred.name } },
-    });
-
-    if (signUpError) {
-      setLoading(false);
-      setInfo('');
-      setError(`Failed to create demo account: ${signUpError.message}`);
-      return;
-    }
-
-    if (signUpData.user) {
-      // Seed demo data for the new user
-      await seedUserData(signUpData.user.id);
-
-      // If signUp returned a session (auto-confirm enabled), we're already logged in
-      if (signUpData.session) return;
-
-      // Otherwise sign out the interim session and sign in properly
-      await supabase.auth.signOut();
-      setInfo('Signing in...');
-      const { error: secondSignInError } = await supabase.auth.signInWithPassword({
-        email: cred.email,
-        password: cred.password,
-      });
-
-      if (secondSignInError) {
-        setLoading(false);
-        setInfo('');
-        setError(`Account created but login failed: ${secondSignInError.message}`);
-      }
-    }
+    setTimeout(() => {
+      persistAndLogin({ id: cred.id, email: cred.email, name: cred.name });
+    }, 600);
   };
 
   return (
@@ -200,7 +166,7 @@ export default function AuthPage() {
           {/* Tabs */}
           <div className="flex gap-1 bg-white border border-slate-200 rounded-xl p-1 mb-6">
             <button
-              onClick={() => { setMode('login'); setError(''); setInfo(''); }}
+              onClick={() => { setMode('login'); setError(''); }}
               className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition ${
                 mode === 'login' ? 'bg-whatsapp-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
               }`}
@@ -208,7 +174,7 @@ export default function AuthPage() {
               Login
             </button>
             <button
-              onClick={() => { setMode('signup'); setError(''); setInfo(''); }}
+              onClick={() => { setMode('signup'); setError(''); }}
               className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition ${
                 mode === 'signup' ? 'bg-whatsapp-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
               }`}
@@ -229,11 +195,6 @@ export default function AuthPage() {
           {error && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-red-50 border border-red-100 text-sm text-red-600 flex items-center gap-2 animate-fade-in-up">
               <AlertCircle className="w-4 h-4 shrink-0" /> {error}
-            </div>
-          )}
-          {info && (
-            <div className="mb-4 px-4 py-3 rounded-lg bg-whatsapp-50 border border-whatsapp-100 text-sm text-whatsapp-700 flex items-center gap-2 animate-fade-in-up">
-              <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> {info}
             </div>
           )}
 
@@ -291,11 +252,11 @@ export default function AuthPage() {
             </button>
           </form>
 
-          {/* Demo credentials — one click to auto-create + login */}
+          {/* Demo credentials — one click to login */}
           {mode === 'login' && (
             <div className="mt-6 pt-5 border-t border-slate-200">
               <p className="text-xs font-semibold text-slate-400 uppercase mb-1 text-center">Quick Demo Login</p>
-              <p className="text-[11px] text-slate-400 mb-3 text-center">Click a card to instantly sign in — account is auto-created on first use</p>
+              <p className="text-[11px] text-slate-400 mb-3 text-center">Click a card to instantly sign in to the demo</p>
               <div className="space-y-2">
                 {DEMO_CREDENTIALS.map((c) => (
                   <button
@@ -308,7 +269,7 @@ export default function AuthPage() {
                       {c.name.split(' ').map((n) => n[0]).join('')}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-slate-700">{c.name}</p>
+                      <p className="text-sm font-medium text-slate-700">{c.name} <span className="text-[11px] font-normal text-slate-400">· {c.role}</span></p>
                       <p className="text-xs text-slate-400">{c.email} · {c.password}</p>
                     </div>
                     {loading ? (
@@ -324,7 +285,7 @@ export default function AuthPage() {
 
           <p className="text-center text-sm text-slate-400 mt-6">
             {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-            <button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setInfo(''); }} className="text-whatsapp-600 font-semibold hover:underline">
+            <button onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); }} className="text-whatsapp-600 font-semibold hover:underline">
               {mode === 'login' ? 'Sign up' : 'Sign in'}
             </button>
           </p>
