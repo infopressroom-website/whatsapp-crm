@@ -9,7 +9,6 @@ import {
   type AutomationFlow, type FlowStatus, type FlowTrigger,
 } from '@/data/mockData';
 import { useAutomationFlows } from '@/lib/hooks';
-import { supabase } from '@/lib/supabase';
 
 const triggerIcons: Record<string, typeof Zap> = {
   UserPlus: UserPlus,
@@ -26,7 +25,7 @@ const statusConfig: Record<FlowStatus, { color: string; bg: string; label: strin
 };
 
 export default function Automation() {
-  const { list: flows, toggleFlow, deleteFlow } = useAutomationFlows();
+  const { list: flows, toggleFlow, deleteFlow, createFlow } = useAutomationFlows();
   const [statusFilter, setStatusFilter] = useState<FlowStatus | 'All'>('All');
   const [triggerFilter, setTriggerFilter] = useState<FlowTrigger | 'All'>('All');
   const [showCreate, setShowCreate] = useState(false);
@@ -58,10 +57,7 @@ export default function Automation() {
   const handleCreate = async () => {
     if (!name.trim() || !message.trim()) return;
     const detail = triggerOptions.find((t) => t.trigger === trigger)?.description ?? '';
-    await supabase.from('automation_flows').insert({
-      name, trigger, trigger_detail: detail, message, delay,
-      status: 'Active', enrolled: 0, sent: 0, conversion_rate: 0,
-    });
+    await createFlow({ name, trigger, triggerDetail: detail, message, delay, status: 'Active' });
     setCreated(true);
     setTimeout(() => {
       setShowCreate(false);
